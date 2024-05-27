@@ -1,0 +1,53 @@
+data:
+  dataset: HausaNLP/AfriSenti-SemEval
+  languages: [kin, swa, tso]
+  num_classes: 3
+  output_dir: data/processed/afrisenti
+
+embedding_model: castorini/afriberta_large
+max_length: 128
+
+lida:
+  r_min: 0.0
+  r_max: 0.1
+  n_augmented: 2
+
+dae:
+  input_dim: 768
+  latent_dim: 32
+  dropout: 0.2
+  epochs: 30
+  lr: 1.0e-3
+  batch_size: 64
+
+vae:
+  input_dim: 768
+  hidden_dim: 512
+  latent_dim: 256
+  dropout: 0.2
+  epochs: 30
+  lr: 1.0e-3
+  batch_size: 64
+  beta: 1.0
+
+mage:
+  embed_dim: 768
+  num_heads: 4
+  num_classes: 3
+  dropout: 0.1
+  epochs: 20
+  lr: 2.0e-4
+  batch_size: 32
+
+lstm_baseline:
+  input_dim: 768
+  hidden_dim: 128
+  num_classes: 3
+  dropout: 0.2
+  epochs: 20
+  lr: 1.0e-3
+  batch_size: 32
+  patience: 3
+
+seed: 42
+output_dir: outputs/mage

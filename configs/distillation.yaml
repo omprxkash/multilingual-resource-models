@@ -1,0 +1,33 @@
+teacher_model: Davlan/afro-xlmr-large
+
+student:
+  num_hidden_layers: 6
+  hidden_size: 256
+  num_attention_heads: 8
+  intermediate_size: 1024
+
+distillation:
+  temperature: 2.0
+  alpha: 0.5
+  num_epochs: 15
+  batch_size: 8
+  grad_accum_steps: 2
+  learning_rate: 5.0e-5
+  fp16: true
+  patience: 3
+  seq_len: 128
+  output_dir: outputs/distillation
+
+finetuning:
+  num_epochs: 5
+  batch_size: 16
+  learning_rate: 2.0e-5
+  languages: [kin, swa, hau, ibo, yor]
+  output_dir: outputs/finetuned
+  patience: 3
+
+data:
+  afrisenti_dir: data/processed/afrisenti
+  max_length: 128
+
+seed: 42

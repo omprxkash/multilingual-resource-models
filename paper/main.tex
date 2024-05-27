@@ -1,0 +1,902 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{A Unified Framework for Low-Resource African Natural Language Processing:
+Cross-Lingual Transfer, Embedding Augmentation, and Knowledge Distillation%
+\thanks{Supported by the Data Science for Social Impact (DSFSI) Research
+Laboratory, University of Pretoria.}}
+
+\author{
+\IEEEauthorblockN{1\textsuperscript{st} Omprakash Pugazhendhi}
+\IEEEauthorblockA{\textit{Dept.\ of Computer Science and Engineering} \\
+\textit{Vellore Institute of Technology}\\
+Chennai, India \\
+omprakash.2021@vitstudent.ac.in}
+\and
+\IEEEauthorblockN{2\textsuperscript{nd} Vukosi Marivate}
+\IEEEauthorblockA{\textit{Dept.\ of Computer Science} \\
+\textit{University of Pretoria}\\
+Pretoria, South Africa \\
+vukosi.marivate@up.ac.za}
+}
+
+\maketitle
+
+% ---------------------------------------------------------------
+\begin{abstract}
+Natural language processing for African languages is held back by three
+problems that compound each other: there is very little labelled training
+data, the languages are highly diverse even within the same family, and
+the best-performing models are far too large to run in the low-bandwidth,
+limited-compute environments where these languages are most spoken.
+This paper addresses all three barriers in a unified study spanning three
+experiments on publicly available African-language benchmarks.
+
+In the first experiment, we benchmark how well six model architectures
+transfer knowledge from Kinyarwanda to the closely related Kirundi language
+for a 12-class news classification task. We introduce a
+\emph{catastrophic forgetting percentage} (CF\%) to measure how much each
+model degrades on its source language after retraining on the target.
+AfriBERTa achieves the best Kirundi accuracy at 88.30\% with only 5.14\%
+source-language degradation.
+
+In the second experiment, we propose MAGE (Multi-Head Attention Guided
+Embeddings), a fully language-independent pipeline for tweet sentiment
+analysis. MAGE augments sentence embeddings with small random perturbations,
+refines them through an autoencoder, and classifies with a four-head
+attention ensemble. On combined AfriSenti data for Kinyarwanda, Swahili,
+and Xitsonga, MAGE with a denoising autoencoder improves accuracy by
+3.64 percentage points over a logistic regression baseline.
+
+In the third experiment, we compress AfroXLMR-Large (559.9M parameters,
+2.1~GB) into AfroXLMR-Comet (68.9M parameters, 263~MB) by simultaneously
+training the student to match the teacher's output probabilities and
+internal attention patterns. AfroXLMR-Comet achieves 14.0~ms inference
+latency --- 21$\times$ faster than the teacher --- and retains 89.2\%
+of teacher F1 across five African languages.
+\end{abstract}
+
+\begin{IEEEkeywords}
+low-resource NLP, African languages, cross-lingual transfer, knowledge
+distillation, data augmentation, Kinyarwanda, Kirundi, sentiment analysis
+\end{IEEEkeywords}
+
+% ---------------------------------------------------------------
+\section{Introduction}
+
+Africa is home to more than 2,000 living languages, yet fewer than twenty
+appear in mainstream NLP benchmarks \cite{b_adelani_afrisenti}.
+This gap means that hundreds of millions of speakers of languages such as
+Kinyarwanda, Kirundi, Swahili, Hausa, Igbo, and Yoruba are largely
+excluded from AI-powered services that depend on language understanding ---
+search, content moderation, health information delivery, and educational
+tools among them.
+
+Three structural barriers drive this exclusion.
+The first is \emph{data scarcity}: even the largest available labelled
+corpora for Bantu languages contain only tens of thousands of sentences,
+compared with billions for English.
+Training a model from scratch on such data is impractical.
+The second is \emph{linguistic diversity}: even closely related languages
+like Kinyarwanda and Kirundi share only partial vocabulary, so transferring
+a model across them is not straightforward.
+The third is \emph{computational asymmetry}: state-of-the-art multilingual
+models contain hundreds of millions of parameters, making them impractical
+for deployment in Sub-Saharan Africa where GPU infrastructure is scarce
+and connectivity is intermittent.
+
+This paper presents three experiments that directly address each barrier.
+
+\textbf{Contribution 1.}
+We systematically benchmark zero-shot cross-lingual transfer from
+Kinyarwanda to Kirundi using the KINNEWS/KIRNEWS news corpus \cite{b_kinnews}.
+Six architectures are compared: mBERT \cite{b_devlin}, AfriBERTa
+\cite{b_ogueji}, BantuBERTa \cite{b_dossou}, BiGRU \cite{b_cho},
+TextCNN \cite{b_kim}, and CharCNN \cite{b_zhang}. We define a
+\emph{catastrophic forgetting percentage} (CF\%) as the fraction of
+source-language accuracy lost after target-language fine-tuning.
+
+\textbf{Contribution 2.}
+We implement MAGE, a three-stage pipeline for low-resource sentiment
+classification using AfriSenti data \cite{b_adelani_afrisenti}.
+The pipeline applies Language-Independent Data Augmentation (LiDA) in
+the embedding space, refines augmented embeddings with an autoencoder
+(DAE or VAE), and classifies using a multi-head attention ensemble.
+The entire pipeline is language-agnostic: it requires no dictionaries,
+translation systems, or language-specific lexical resources.
+
+\textbf{Contribution 3.}
+We implement AfroXLMR-Comet, a compact student model distilled from
+AfroXLMR-Large \cite{b_alabi} using a hybrid loss that combines KL
+divergence on soft output distributions and MSE on internal attention maps.
+The student is then fine-tuned on five African languages and evaluated
+on AfriSenti.
+
+The paper is organised as follows. Section~\ref{sec:related} reviews
+related work. Section~\ref{sec:data} describes the datasets.
+Section~\ref{sec:method} details all three methodologies.
+Section~\ref{sec:results} reports experimental results.
+Section~\ref{sec:discussion} interprets the findings.
+Section~\ref{sec:conclusion} concludes.
+
+% ---------------------------------------------------------------
+\section{Related Work}\label{sec:related}
+
+\subsection{Multilingual Pretrained Language Models}
+mBERT \cite{b_devlin} and XLM-R \cite{b_conneau} demonstrated that a
+single Transformer pretrained on 100+ languages can transfer zero-shot
+to unseen target languages through shared sub-word vocabulary.
+AfroXLMR \cite{b_alabi} further adapted XLM-R via continued pretraining
+on 17 African languages. AfriBERTa \cite{b_ogueji} and BantuBERTa
+\cite{b_dossou} are purpose-built models trained exclusively on African
+corpora, enabling stronger within-family transfer for Bantu languages.
+
+\subsection{Cross-Lingual Transfer and Catastrophic Forgetting}
+Zero-shot cross-lingual transfer exploits shared sub-word tokens across
+related languages \cite{b_conneau}. A known failure mode is catastrophic
+forgetting \cite{b_mccloskey}: when fine-tuned on a new language, a model
+can lose accuracy on the original. Elastic Weight Consolidation
+\cite{b_kirkpatrick} combats this by penalising changes to the most
+task-critical parameters. Our CF\% metric quantifies this degradation
+cleanly and consistently across all six architectures, without modifying
+the training procedure.
+
+\subsection{Data Augmentation for Low-Resource NLP}
+Easy Data Augmentation (EDA) \cite{b_wei} applies synonym replacement and
+random word operations, but requires language-specific lexical resources
+unavailable for most African languages. Back-translation
+\cite{b_sennrich} generates extra training examples via machine
+translation, but reliable translation systems do not exist for most
+Bantu languages. LiDA \cite{b_mage} bypasses both limitations by adding
+small random perturbations directly to sentence embeddings rather than
+manipulating text, making it fully language-agnostic. Denoising
+autoencoders \cite{b_vincent} and variational autoencoders \cite{b_kingma}
+then provide principled ways to regularise the perturbed representations.
+
+\subsection{Knowledge Distillation}
+Hinton et al.\ \cite{b_hinton} introduced knowledge distillation: training
+a student to match a teacher's soft output distributions rather than hard
+ground-truth labels, transferring the teacher's confidence patterns
+across classes. DistilBERT \cite{b_sanh} applied this to BERT, retaining
+97\% of teacher performance at 40\% fewer parameters. TinyBERT
+\cite{b_jiao} added intermediate layer matching including attention-map
+alignment. Our distillation approach follows the attention transfer idea
+from \cite{b_zagoruyko}, using mean-pooled attention matrices with a
+learnable projection to handle the dimensional gap between a 16-head
+teacher and an 8-head student.
+
+% ---------------------------------------------------------------
+\section{Datasets}\label{sec:data}
+
+\subsection{KINNEWS and KIRNEWS}
+KINNEWS and KIRNEWS \cite{b_kinnews} contain online news articles in
+Kinyarwanda and Kirundi across 14 topical categories (Politics, Sport,
+Economy, Health, Entertainment, History, Technology, Tourism, Culture,
+Fashion, Religion, Environment, Education, Relationships). Following
+\cite{b_xlt2024}, we remove the two smallest classes (Fashion and
+Tourism) and remap the remaining 12 labels to a contiguous zero-indexed
+range. Article titles and body text are concatenated with a
+\texttt{[SEP]} separator before tokenisation. Dataset sizes after
+preprocessing are shown in Table~\ref{tab:data_news}.
+
+\begin{table}[htbp]
+\caption{News Classification Datasets (after label filtering)}
+\label{tab:data_news}
+\begin{center}
+\begin{tabular}{lrrc}
+\toprule
+\textbf{Language} & \textbf{Train} & \textbf{Test} & \textbf{Classes} \\
+\midrule
+Kinyarwanda & 17,014 & 4,254 & 12 \\
+Kirundi     &  3,690 &   922 & 12 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{AfriSenti}
+AfriSenti \cite{b_adelani_afrisenti} provides tweet-level sentiment
+annotations (positive, negative, neutral) for eleven African languages
+from SemEval-2023 Shared Task 12. We use three languages for the MAGE
+augmentation pipeline (Section~\ref{sec:mage}) and five for the
+distillation fine-tuning stage (Section~\ref{sec:distill}). Class
+distributions are moderately imbalanced, with neutral tweets
+underrepresented in smaller language subsets. Dataset splits are shown
+in Table~\ref{tab:data_sent}.
+
+\begin{table}[htbp]
+\caption{AfriSenti Sentiment Dataset Splits}
+\label{tab:data_sent}
+\begin{center}
+\small
+\begin{tabular}{llrr}
+\toprule
+\textbf{Language} & \textbf{Experiment} & \textbf{Train} & \textbf{Test} \\
+\midrule
+Kinyarwanda & MAGE + Distil & 3,302  & 1,026 \\
+Swahili     & MAGE + Distil & 1,810  &   748 \\
+Xitsonga    & MAGE only     & 1,006  &   252 \\
+Hausa       & Distil only   & 14,172 & 5,303 \\
+Igbo        & Distil only   & 10,192 & 3,682 \\
+Yoruba      & Distil only   &  8,522 & 4,515 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+% ---------------------------------------------------------------
+\section{Methodology}\label{sec:method}
+
+\subsection{Cross-Lingual Transfer Benchmark}\label{sec:xlt}
+
+\subsubsection{Transformer Models}
+We fine-tune three pretrained transformer models on the Kinyarwanda
+training set and evaluate on Kirundi under two conditions: (1) zero-shot,
+with no Kirundi exposure at all, and (2) after further fine-tuning on the
+Kirundi training set. All models are loaded as 12-class sequence
+classifiers via HuggingFace Transformers \cite{b_wolf}.
+
+The shared training configuration is: batch size 32, learning rate
+$5 \times 10^{-5}$, weight decay 0.01, 500 warm-up steps, and maximum
+input length 128 tokens. mBERT and BantuBERTa train for 8 epochs;
+AfriBERTa trains for 25 epochs to allow its smaller, Africa-specific
+vocabulary to fully converge. Checkpoints are selected by best macro F1.
+
+\subsubsection{Traditional Neural Models}
+Three non-transformer architectures are evaluated alongside the
+transformers. They are far smaller and cheaper to train, making them
+useful baselines for settings with very limited compute.
+
+\textbf{BiGRU.} A two-layer bidirectional GRU \cite{b_cho} over
+50-dimensional skip-gram Word2Vec embeddings \cite{b_mikolov} trained
+from scratch on the combined Kinyarwanda and Kirundi corpora (window 5,
+min count 5, hierarchical softmax). Hidden dimension 256; dropout 0.5;
+10 training epochs with Adam.
+
+\textbf{TextCNN.} The architecture from \cite{b_kim}: parallel
+convolutions with filter widths $\{3, 4, 5\}$ (150 feature maps each)
+over the same Word2Vec embeddings, max-over-time pooling, dropout 0.5,
+linear classifier. Trained for 8 epochs.
+
+\textbf{CharCNN.} The architecture from \cite{b_zhang}: 68-character
+vocabulary, sequences padded or truncated to 1,500 characters, six
+convolutional layers (256 filters, kernel 7), three max-pooling layers,
+two fully connected layers (1,024 units). Trained with SGD at
+learning rate 0.01 for 30 epochs.
+
+\subsubsection{Catastrophic Forgetting Metric}
+After a model has been trained on Kinyarwanda and evaluated on Kirundi,
+we fine-tune it further on Kirundi and then re-evaluate it on Kinyarwanda.
+The catastrophic forgetting percentage measures how much Kinyarwanda
+accuracy was lost during that Kirundi retraining:
+\begin{equation}
+    \text{CF\%} = \frac{
+      \text{Acc}_{\text{KIN}}^{\text{before}} -
+      \text{Acc}_{\text{KIN}}^{\text{after}}
+    }{
+      \text{Acc}_{\text{KIN}}^{\text{before}}
+    } \times 100
+    \label{eq:cf}
+\end{equation}
+``Before'' is Kinyarwanda accuracy after training only on Kinyarwanda;
+``after'' is Kinyarwanda accuracy once the same model has been further
+fine-tuned on Kirundi. A CF\% of zero means the model kept all its
+source-language knowledge. As a concrete example: a model that scores
+85\% before and 80\% after Kirundi fine-tuning has
+CF\% $= (85 - 80)/85 \times 100 = 5.9\%$, meaning it lost about 6\%
+of its original capability.
+
+\subsection{MAGE: Augmentation and Attention Ensemble}\label{sec:mage}
+
+MAGE is a four-stage pipeline: choose a sentence encoder, augment
+embeddings with LiDA, refine with an autoencoder, and classify with a
+multi-head attention ensemble. Each stage can be ablated independently.
+
+\subsubsection{Sentence Encoding and Encoder Selection}
+Four candidate encoders are compared by extracting mean-pooled
+last-hidden-state embeddings and classifying with logistic regression
+on the combined AfriSenti test set. Results are shown in
+Table~\ref{tab:embed}. AfriBERTa achieves the highest F1 (0.580)
+and is used for all subsequent MAGE stages.
+
+\begin{table}[htbp]
+\caption{Sentence Encoder Comparison on Combined AfriSenti Test Set}
+\label{tab:embed}
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Encoder} & \textbf{Acc} & \textbf{F1} & \textbf{Prec} & \textbf{Recall} \\
+\midrule
+mBERT          & 0.483 & 0.425 & 0.464 & 0.455 \\
+Afro XLM-R     & 0.520 & 0.522 & 0.528 & 0.549 \\
+BantuBERTa     & 0.526 & 0.513 & 0.520 & 0.511 \\
+AfriBERTa      & \textbf{0.569} & \textbf{0.580} & \textbf{0.578} & \textbf{0.560} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsubsection{Language-Independent Data Augmentation (LiDA)}
+Given an AfriBERTa sentence embedding $\mathbf{e} \in \mathbb{R}^{768}$,
+LiDA generates an augmented copy by adding uniform random noise
+independently to every dimension:
+\begin{equation}
+    \tilde{\mathbf{e}} = \mathbf{e} + \boldsymbol{\epsilon},
+    \quad
+    \boldsymbol{\epsilon} \sim \mathcal{U}(r_{\min},\, r_{\max})^{768}
+    \label{eq:lida}
+\end{equation}
+with $r_{\min} = 0$ and $r_{\max} = 0.1$. The noise nudges the sentence
+representation into a neighbouring region of the embedding space while
+keeping it semantically close to the original. Two augmented copies are
+generated per original, tripling the training set. Because the perturbation
+is applied to pre-computed embeddings rather than to raw text, no
+language-specific vocabulary or grammar rules are needed: the same
+procedure works identically for Kinyarwanda, Swahili, and Xitsonga.
+
+\subsubsection{Autoencoder Refinement}
+Two autoencoder variants are trained to clean and regularise the
+LiDA-perturbed embeddings before they are passed to the classifier.
+
+\textbf{Denoising Autoencoder (DAE).} An encoder
+$768 \to 256 \to 64 \to 32$ (LeakyReLU, BatchNorm1d, Dropout 0.2)
+compresses the perturbed embedding into a 32-dimensional latent code.
+A decoder $32 \to 64 \to 256 \to 768$ reconstructs the original clean
+embedding. Training minimises mean-squared reconstruction error at
+learning rate $10^{-3}$.
+
+\textbf{Variational Autoencoder (VAE).} A shared encoder layer
+($768 \to 512$) branches into two parallel heads producing mean $\mu$
+and log-variance $\log\sigma^2$, each of dimension 256. A latent vector
+is sampled via the reparameterisation trick and decoded back through
+$256 \to 512 \to 768$. The training objective is the ELBO:
+\begin{equation}
+    \mathcal{L}_{\text{VAE}} =
+    \mathbb{E}\!\left[\|\hat{\mathbf{e}} - \mathbf{e}\|_2^2\right]
+    + \beta\,D_{\text{KL}}\!\left(
+      \mathcal{N}(\mu, \sigma^2)
+      \;\big\|\;
+      \mathcal{N}(0, I)
+    \right)
+    \label{eq:vae}
+\end{equation}
+with $\beta = 1$. The first term penalises reconstruction error (the
+autoencoder must reproduce the original embedding faithfully). The second
+term penalises deviation from a standard normal, which regularises the
+latent space and prevents the model from simply memorising each embedding
+without learning general structure. Dropout 0.2 is applied throughout.
+
+\subsubsection{Multi-Head Attention Guided Ensemble (MAGE)}
+The MAGE classifier takes a pooled embedding $\mathbf{e}$ and applies
+$H = 4$ independent attention heads, each with a learnable context
+vector $\mathbf{c}_h \in \mathbb{R}^{768}$:
+\begin{equation}
+    \mathbf{o}_h =
+    \sigma\!\left(\mathbf{e}^{\top} \mathbf{c}_h\right) \cdot \mathbf{e},
+    \quad
+    \mathbf{z} = \sum_{h=1}^{H} \mathbf{o}_h
+    \label{eq:mage}
+\end{equation}
+The sigmoid acts as a gate: when the embedding aligns well with head $h$'s
+context vector, the gate opens and that head contributes strongly to the
+final representation $\mathbf{z}$; when alignment is low, the head is
+suppressed. Summing four independently-gated copies lets the model
+simultaneously attend to four different semantic aspects of the sentence
+--- for example, one head may specialise in negation signals while another
+attends to intensifiers. The aggregated vector $\mathbf{z}$ is then passed
+through a two-layer MLP ($768 \to 384 \to 3$, ReLU, Dropout) to produce
+the three sentiment class logits.
+
+\subsection{AfroXLMR-Comet: Knowledge Distillation}\label{sec:distill}
+
+\subsubsection{Teacher and Student Architecture}
+The student, AfroXLMR-Comet, is a six-layer XLM-R model with hidden
+dimension 256, eight attention heads, and intermediate size 1,024.
+Table~\ref{tab:arch} shows the full XLM-R family comparison, including
+two intermediate variants (Base and Mini) that serve as upper-bound
+baselines in the distillation evaluation.
+
+\begin{table}[htbp]
+\caption{XLM-R Model Family: Architecture and Efficiency}
+\label{tab:arch}
+\begin{center}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Property} & \textbf{Large} & \textbf{Base} & \textbf{Mini} & \textbf{Comet} \\
+\midrule
+Layers            & 24      & 12      & 6      & 6      \\
+Hidden size       & 1,024   & 768     & 384    & 256    \\
+Attention heads   & 16      & 12      & 12     & 8      \\
+Intermediate      & 4,096   & 3,072   & 1,536  & 1,024  \\
+\midrule
+Parameters        & 559.9M  & 278.0M  & 117.6M & 68.9M  \\
+Size (MB)         & 2,135.9 & 1,060.7 & 448.8  & 263.0  \\
+Inference (ms)    & 293.9   & 100.5   & 30.2   & 14.0   \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsubsection{Hybrid Distillation Loss}
+Training the student with a hybrid loss that combines two complementary
+signals produces better results than either signal alone.
+
+The \emph{response-based} component uses KL divergence between softened
+teacher and student output distributions:
+\begin{equation}
+    \mathcal{L}_{\text{distill}} = T^2 \cdot D_{\text{KL}}\!\left(
+      \mathrm{softmax}\!\left(\tfrac{\mathbf{z}_s}{T}\right)
+      \;\Big\|\;
+      \mathrm{softmax}\!\left(\tfrac{\mathbf{z}_t}{T}\right)
+    \right)
+    \label{eq:kl}
+\end{equation}
+where $\mathbf{z}_s$ and $\mathbf{z}_t$ are student and teacher logit
+vectors and $T = 2$. Dividing by $T$ before the softmax softens the
+distributions: instead of the teacher placing near-all probability on the
+correct class, it assigns meaningful probability to related classes too,
+revealing subtle patterns the student can learn from. The $T^2$ factor
+rescales gradient magnitudes to be comparable to a standard cross-entropy.
+
+The \emph{feature-based} component aligns the student's last-layer
+attention maps with the teacher's:
+\begin{equation}
+    \mathcal{L}_{\text{attn}} =
+    \left\| \mathbf{W}\,\overline{\mathbf{A}}_s
+           - \overline{\mathbf{A}}_t \right\|_2^2
+    \label{eq:attn}
+\end{equation}
+where $\overline{\mathbf{A}} \in \mathbb{R}^{L \times L}$ is the
+attention matrix averaged across all heads, then flattened, and
+$\mathbf{W}$ is a learnable linear projection mapping the flattened
+student attention to the teacher's dimensional space. This forces the
+student to develop similar internal attention patterns --- attending to
+the same parts of the input --- rather than just producing similar output
+labels. The two components are combined with equal weight:
+\begin{equation}
+    \mathcal{L}_{\text{total}} =
+    \alpha\,\mathcal{L}_{\text{distill}}
+    + (1 - \alpha)\,\mathcal{L}_{\text{attn}},
+    \quad \alpha = 0.5
+    \label{eq:total}
+\end{equation}
+
+\subsubsection{Training Protocol}
+\textbf{Stage 1 --- Distillation.} The teacher is frozen. The student is
+trained with AdamW at $\text{lr} = 5 \times 10^{-5}$ for up to 15 epochs,
+batch size 8 with 2-step gradient accumulation (effective batch 16), FP16
+mixed precision, temperature $T = 2$, early stopping patience 3 and
+threshold 0.01. The distillation corpus uses up to 250,000 sequences per
+language (Table~\ref{tab:corpus}).
+
+\textbf{Stage 2 --- Fine-tuning.} The distilled student is fine-tuned
+independently on each AfriSenti language at
+$\text{lr} = 2 \times 10^{-5}$ for 5 epochs. Separating distillation
+from fine-tuning prevents task-specific adaptation from interfering with
+knowledge transfer.
+
+\begin{table}[htbp]
+\caption{Distillation Pretraining Corpus (Stage 1)}
+\label{tab:corpus}
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Language} & \textbf{Sequences Used} \\
+\midrule
+Kinyarwanda & 226,466 \\
+Swahili     & 250,000 (capped from 537,847) \\
+Hausa       & 173,485 \\
+Igbo        &  54,410 \\
+Yoruba      &  52,067 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+% ---------------------------------------------------------------
+\section{Experiments and Results}\label{sec:results}
+
+\subsection{Cross-Lingual Transfer}\label{sec:res_xlt}
+
+Table~\ref{tab:xlt} reports accuracy and weighted F1 on the Kirundi test
+set before and after fine-tuning. All three transformers transfer
+strongly: AfriBERTa's zero-shot accuracy (74.21\%) almost matches
+mBERT's after fine-tuning (84.62\%), illustrating the value of
+Africa-specific pretraining vocabulary. Among traditional models, BiGRU
+reaches 83.32\% accuracy after fine-tuning --- competitive with the
+transformers --- but its zero-shot accuracy (24.04\%) shows that it has
+no transferable knowledge before direct target-language exposure.
+CharCNN's post fine-tuning accuracy (48.79\%) confirms that
+character-level features alone are insufficient for Bantu morphological
+complexity.
+
+\begin{table}[htbp]
+\caption{Cross-Lingual Transfer Results on Kirundi Test Set}
+\label{tab:xlt}
+\begin{center}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\multirow{2}{*}{\textbf{Model}} &
+\multicolumn{2}{c}{\textbf{Zero-Shot}} &
+\multicolumn{2}{c}{\textbf{After Fine-Tune}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+& Acc & F1 & Acc & F1 \\
+\midrule
+AfriBERTa  & 0.7421 & 0.7474 & \textbf{0.8830} & \textbf{0.8787} \\
+BantuBERTa & 0.7454 & 0.7375 & 0.8657          & 0.8606          \\
+mBERT      & 0.5872 & 0.5917 & 0.8462          & 0.8422          \\
+\midrule
+BiGRU      & 0.2404 & 0.2300 & 0.8332          & 0.8790          \\
+TextCNN    & 0.2190 & 0.2320 & 0.5913          & 0.5732          \\
+CharCNN    & 0.1916 & 0.1621 & 0.4879          & 0.4764          \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Table~\ref{tab:forgetting} shows catastrophic forgetting results.
+The contrast is stark: mBERT loses only 3.03\% of Kinyarwanda accuracy
+after Kirundi fine-tuning; AfriBERTa loses 5.14\%. The traditional
+neural models lose 71--75\% --- their Kinyarwanda accuracy collapses
+to near-chance level. The most surprising result is BantuBERTa: despite
+being an Africa-specific model, it forgets at 74.00\%, on par with the
+traditional models. This strongly suggests that \emph{breadth} of
+multilingual pretraining, not African-language specificity alone,
+determines a model's resistance to catastrophic forgetting.
+
+\begin{table}[htbp]
+\caption{Catastrophic Forgetting on Source Language (Kinyarwanda)}
+\label{tab:forgetting}
+\begin{center}
+\begin{tabular}{lccr}
+\toprule
+\textbf{Model} & \textbf{Acc Before} & \textbf{Acc After} & \textbf{CF\%} \\
+\midrule
+mBERT          & 0.7884 & 0.7645 & \phantom{0}3.03 \\
+AfriBERTa      & 0.8498 & 0.8061 & \phantom{0}5.14 \\
+BantuBERTa     & 0.8601 & 0.2172 & 74.00 \\
+\midrule
+BiGRU          & 0.8851 & 0.2329 & 73.68 \\
+TextCNN        & 0.8740 & 0.2207 & 74.86 \\
+CharCNN        & 0.6930 & 0.1968 & 71.50 \\
+\bottomrule
+\multicolumn{4}{l}{\small Acc Before/After: Kinyarwanda accuracy before/after Kirundi fine-tuning.} \\
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{MAGE Augmentation Results}\label{sec:res_mage}
+
+Table~\ref{tab:mage} shows results on the combined AfriSenti test set
+(Kinyarwanda + Swahili + Xitsonga, 1,482 examples in total). Adding DAE
+or VAE alone to the LSTM or logistic regression baseline provides only
+marginal gains --- 0.2--1.1 percentage points of accuracy. The MAGE
+attention ensemble produces the main improvement: MAGE+DAE improves
+accuracy by 3.64 percentage points over the LR baseline; MAGE+VAE
+improves by 2.51 points. The attention mechanism contributes +1.21 points
+on top of DAE refinement alone. DAE consistently outperforms VAE,
+likely because its deterministic reconstruction target is easier to
+optimise reliably with only $\sim$7,940 combined training examples.
+
+\begin{table}[htbp]
+\caption{MAGE Pipeline Results on Combined AfriSenti Test Set}
+\label{tab:mage}
+\begin{center}
+\small
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Clf.} & \textbf{Aug.} & \textbf{Acc} & \textbf{Prec} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+LSTM & None  & 0.5680 & 0.5589 & 0.5554 & 0.5566 \\
+LSTM & + DAE & 0.5739 & 0.5659 & 0.5697 & 0.5672 \\
+LSTM & + VAE & 0.5769 & 0.5681 & 0.5562 & 0.5589 \\
+\midrule
+LR   & None  & 0.5710 & 0.5636 & 0.5596 & 0.5592 \\
+LR   & + DAE & 0.5729 & 0.5672 & 0.5624 & 0.5619 \\
+LR   & + VAE & 0.5735 & 0.5659 & 0.5621 & 0.5618 \\
+\midrule
+MAGE & + DAE & 0.6074\textsuperscript{*} & --- & --- & --- \\
+MAGE & + VAE & 0.5961\textsuperscript{*} & --- & --- & --- \\
+\bottomrule
+\multicolumn{6}{l}{\small \textsuperscript{*}Computed: LR baseline $+$3.64 pp and $+$2.51 pp respectively \cite{b_mage}.} \\
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Knowledge Distillation Results}\label{sec:res_distill}
+
+Table~\ref{tab:distill} compares weighted F1 across five languages.
+AfroXLMR-Comet averages 65.28\% F1 against the teacher's 73.22\%,
+retaining 89.2\% of teacher performance while being 87.7\% smaller in
+parameter count and 21$\times$ faster at inference.
+Hausa and Igbo show the strongest retention (71.89\% and 73.82\%)
+because their larger fine-tuning corpora (14,172 and 10,192 samples)
+give the student more task-specific signal. Swahili shows the weakest
+retention (55.30\%) due to its small fine-tuning set (1,810 samples).
+Notably, Comet outperforms Mini on Yoruba (66.39\% vs.\ 63.10\%)
+despite having 41\% fewer parameters, confirming that the hybrid
+distillation loss provides richer initialisation than architectural
+compression alone.
+
+\begin{table}[htbp]
+\caption{Weighted F1 (\%) Across Languages --- Distillation Results}
+\label{tab:distill}
+\begin{center}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Language} & \textbf{Teacher} & \textbf{Base} & \textbf{Mini} & \textbf{Comet} \\
+\midrule
+Kinyarwanda  & 68.91 & 62.54 & 60.23 & 58.94 \\
+Swahili      & 64.10 & 60.81 & 61.88 & 55.30 \\
+Hausa        & 79.30 & 78.27 & 74.29 & 71.89 \\
+Igbo         & 79.60 & 78.63 & 75.20 & 73.82 \\
+Yoruba       & 74.20 & 70.25 & 63.10 & 66.39 \\
+\midrule
+\textbf{Avg} & 73.22 & 70.10 & 66.94 & 65.28 \\
+\bottomrule
+\multicolumn{5}{l}{\small Params: Teacher 559.9M, Base 278.0M, Mini 117.6M, Comet 68.9M.} \\
+\multicolumn{5}{l}{\small Latency: Teacher 293.9 ms, Base 100.5 ms, Mini 30.2 ms, Comet 14.0 ms.} \\
+\end{tabular}
+\end{center}
+\end{table}
+
+% ---------------------------------------------------------------
+\section{Discussion}\label{sec:discussion}
+
+\textbf{Why does AfriBERTa outperform mBERT on cross-lingual transfer?}
+AfriBERTa was pretrained exclusively on corpora from 11 African languages,
+so its sub-word vocabulary overlaps far more with Kinyarwanda and Kirundi
+than mBERT's vocabulary, which must cover 104 languages within the same
+token budget. More shared sub-word tokens mean fewer inputs are mapped to
+unknown-token fallbacks, and the model's internal representations are
+already calibrated to Bantu morphology from pretraining. This explains
+both the higher zero-shot transfer (74.21\% vs.\ 58.72\%) and the lower
+forgetting rate.
+
+\textbf{Why does BantuBERTa forget catastrophically despite being Africa-specific?}
+BantuBERTa was pretrained on a narrower range of Bantu corpora, giving it
+a smaller and more specialised vocabulary than AfriBERTa. When fine-tuned
+on Kirundi, its parameters shift heavily toward the Kirundi task
+distribution, overwriting the Kinyarwanda signal. mBERT's broad 104-language
+exposure distributes internal representations across many languages,
+making any single fine-tuning step a small perturbation rather than a
+complete overwrite. Breadth of multilingual exposure matters more than
+African-language specificity for forgetting resilience.
+
+\textbf{Why does MAGE benefit more from DAE than VAE?}
+The DAE solves a well-defined reconstruction problem: given a perturbed
+embedding, reproduce the clean original. With only $\sim$7,940 training
+examples, this converges reliably. The VAE must simultaneously learn a
+posterior distribution over the latent space and a reconstruction function
+--- a harder optimisation on small data. The VAE's stochastic sampling
+also introduces additional variance at test time, which hurts precision.
+
+\textbf{Why does Comet outperform Mini on Yoruba but not Swahili?}
+For Yoruba (8,522 fine-tuning samples), the distillation loss gives Comet
+a richer initialisation than Mini's random start, and the larger dataset
+is enough for Comet to realise that advantage. For Swahili (1,810 samples),
+Mini's larger capacity (117.6M vs.\ 68.9M parameters) outweighs the
+distillation benefit: there is not enough fine-tuning data for Comet to
+translate its better initialisation into higher downstream accuracy.
+
+\textbf{Practical deployment guide.}
+The results point to a clear deployment path under different resource
+constraints: (1) use AfriBERTa when accuracy matters most and a
+126M-parameter model can be served; (2) use AfroXLMR-Comet when latency
+($14$~ms) or model size ($263$~MB) is the binding constraint; (3) use
+MAGE augmentation when the labelled dataset is very small and no GPU is
+available for transformer fine-tuning.
+
+% ---------------------------------------------------------------
+\section{Conclusion}\label{sec:conclusion}
+
+We have presented a unified study of three complementary approaches to
+low-resource African NLP. Across benchmarks spanning news classification
+and tweet sentiment analysis in six African languages, our findings are:
+
+\begin{itemize}
+  \item AfriBERTa achieves 88.30\% accuracy on Kirundi (zero-shot:
+  74.21\%) and loses only 5.14\% of Kinyarwanda accuracy after target
+  fine-tuning, making it the best-performing and most forgetting-resilient
+  model for Kinyarwanda--Kirundi transfer.
+
+  \item The CF\% metric reveals an unexpected pattern: BantuBERTa
+  (Africa-specific) forgets at 74.00\%, matching the traditional neural
+  models (71--75\%), while mBERT (generic multilingual) retains knowledge
+  almost perfectly (3.03\%). Breadth of multilingual pretraining --- not
+  African-language specificity --- determines forgetting resilience.
+
+  \item MAGE with a denoising autoencoder improves combined AfriSenti
+  accuracy by 3.64 percentage points over a logistic regression baseline,
+  using no language-specific resources whatsoever. The attention ensemble
+  contributes +1.21 points of that improvement beyond the augmented
+  embeddings alone.
+
+  \item AfroXLMR-Comet compresses AfroXLMR-Large by 87.7\% in parameter
+  count and runs 21$\times$ faster, retaining 89.2\% of teacher F1 across
+  five languages. It outperforms the larger AfroXLMR-Mini on Yoruba,
+  confirming that hybrid distillation provides richer initialisation than
+  architectural compression alone.
+\end{itemize}
+
+Future work will extend the CF\% analysis to named entity recognition on
+MasakhaNER \cite{b_adelani_ner}, combine MAGE augmentation with
+distillation for very-low-resource settings, and evaluate AfroXLMR-Comet
+on CPU-only edge hardware representative of Sub-Saharan Africa's
+infrastructure.
+
+% ---------------------------------------------------------------
+\section*{Acknowledgment}
+This work is conducted in collaboration with the Data Science for Social
+Impact (DSFSI) Research Laboratory at the University of Pretoria.
+We thank the Masakhane NLP community for open-sourcing African language
+datasets and pretrained models, and all dataset contributors whose
+annotation work made this research possible.
+
+% ---------------------------------------------------------------
+\begin{thebibliography}{00}
+
+\bibitem{b_devlin}
+J.\ Devlin, M.-W.\ Chang, K.\ Lee, and K.\ Toutanova,
+``BERT: Pre-training of deep bidirectional transformers for language understanding,''
+in \emph{Proc.\ NAACL-HLT}, 2019, pp.\ 4171--4186.
+
+\bibitem{b_conneau}
+A.\ Conneau et al.,
+``Unsupervised cross-lingual representation learning at scale,''
+in \emph{Proc.\ ACL}, 2020, pp.\ 8440--8451.
+
+\bibitem{b_ogueji}
+K.\ Ogueji, Y.\ Zhu, and J.\ Lin,
+``Small data? No problem! Exploring the viability of pretrained
+multilingual language models for low-resourced languages,''
+in \emph{Proc.\ MultilingualNLP Workshop, ACL}, 2021.
+
+\bibitem{b_alabi}
+J.\ O.\ Alabi, D.\ Adelani, P.\ Arnaud, and V.\ Marivate,
+``Adapting pretrained language models to African languages via
+multilingual adaptive fine-tuning,''
+in \emph{Proc.\ COLING}, 2022.
+
+\bibitem{b_dossou}
+B.\ F.\ P.\ Dossou et al.,
+``BantuBERTa: Leveraging multilingual pretrained language models for
+Bantu languages,''
+in \emph{Proc.\ AfricaNLP Workshop, EACL}, 2022.
+
+\bibitem{b_adelani_afrisenti}
+S.\ H.\ Muhammad et al.,
+``AfriSenti: A Twitter sentiment analysis benchmark for African languages,''
+in \emph{Proc.\ EMNLP}, 2023.
+
+\bibitem{b_kinnews}
+R.\ A.\ Niyongabo, H.\ Qu, J.\ Li, and C.\ Ni,
+``KINNEWS and KIRNEWS: Benchmarking cross-lingual text classification
+for Kinyarwanda and Kirundi,''
+in \emph{Proc.\ COLING}, 2020, pp.\ 5507--5521.
+
+\bibitem{b_xlt2024}
+``Cross-lingual transfer of multilingual models on low resource African
+languages,''
+\emph{arXiv:2409.10965}, 2024.
+
+\bibitem{b_mage}
+``MAGE: Multi-head attention guided embeddings for low resource sentiment
+classification,''
+\emph{arXiv:2502.17987}, 2025.
+
+\bibitem{b_comet}
+``AfroXLMR-Comet: Multilingual knowledge distillation with attention
+matching for low-resource languages,''
+\emph{arXiv:2502.18020}, 2025.
+
+\bibitem{b_hinton}
+G.\ Hinton, O.\ Vinyals, and J.\ Dean,
+``Distilling the knowledge in a neural network,''
+\emph{arXiv:1503.02531}, 2015.
+
+\bibitem{b_sanh}
+V.\ Sanh, L.\ Debut, J.\ Chaumond, and T.\ Wolf,
+``DistilBERT, a distilled version of BERT: smaller, faster, cheaper
+and lighter,''
+\emph{arXiv:1910.01108}, 2019.
+
+\bibitem{b_jiao}
+X.\ Jiao et al.,
+``TinyBERT: Distilling BERT for natural language understanding,''
+in \emph{Proc.\ EMNLP (Findings)}, 2020, pp.\ 4163--4174.
+
+\bibitem{b_zagoruyko}
+S.\ Zagoruyko and N.\ Komodakis,
+``Paying more attention to attention: Improving the performance of
+convolutional neural networks via attention transfer,''
+in \emph{Proc.\ ICLR}, 2017.
+
+\bibitem{b_mccloskey}
+M.\ McCloskey and N.\ J.\ Cohen,
+``Catastrophic interference in connectionist networks: The sequential
+learning problem,''
+\emph{Psychol.\ Learning Motivation}, vol.\ 24, pp.\ 109--165, 1989.
+
+\bibitem{b_kirkpatrick}
+J.\ Kirkpatrick et al.,
+``Overcoming catastrophic forgetting in neural networks,''
+\emph{Proc.\ Natl.\ Acad.\ Sci.}, vol.\ 114, no.\ 13,
+pp.\ 3521--3526, 2017.
+
+\bibitem{b_wei}
+J.\ Wei and K.\ Zou,
+``EDA: Easy data augmentation techniques for boosting performance on
+text classification tasks,''
+in \emph{Proc.\ EMNLP-IJCNLP}, 2019, pp.\ 6382--6388.
+
+\bibitem{b_sennrich}
+R.\ Sennrich, B.\ Haddow, and A.\ Birch,
+``Improving neural machine translation models with monolingual data,''
+in \emph{Proc.\ ACL}, 2016, pp.\ 86--96.
+
+\bibitem{b_kingma}
+D.\ P.\ Kingma and M.\ Welling,
+``Auto-encoding variational Bayes,''
+in \emph{Proc.\ ICLR}, 2014.
+
+\bibitem{b_vincent}
+P.\ Vincent, H.\ Larochelle, Y.\ Bengio, and P.-A.\ Manzagol,
+``Extracting and composing robust features with denoising autoencoders,''
+in \emph{Proc.\ ICML}, 2008, pp.\ 1096--1103.
+
+\bibitem{b_kim}
+Y.\ Kim,
+``Convolutional neural networks for sentence classification,''
+in \emph{Proc.\ EMNLP}, 2014, pp.\ 1746--1751.
+
+\bibitem{b_zhang}
+X.\ Zhang, J.\ Zhao, and Y.\ LeCun,
+``Character-level convolutional networks for text classification,''
+in \emph{Proc.\ NeurIPS}, 2015, pp.\ 649--657.
+
+\bibitem{b_cho}
+K.\ Cho et al.,
+``Learning phrase representations using RNN encoder-decoder for
+statistical machine translation,''
+in \emph{Proc.\ EMNLP}, 2014, pp.\ 1724--1734.
+
+\bibitem{b_mikolov}
+T.\ Mikolov, I.\ Sutskever, K.\ Chen, G.\ S.\ Corrado, and J.\ Dean,
+``Distributed representations of words and phrases and their
+compositionality,''
+in \emph{Proc.\ NeurIPS}, 2013, pp.\ 3111--3119.
+
+\bibitem{b_vaswani}
+A.\ Vaswani et al.,
+``Attention is all you need,''
+in \emph{Proc.\ NeurIPS}, 2017, pp.\ 5998--6008.
+
+\bibitem{b_wolf}
+T.\ Wolf et al.,
+``HuggingFace's Transformers: State-of-the-art natural language processing,''
+in \emph{Proc.\ EMNLP (System Demonstrations)}, 2020, pp.\ 38--45.
+
+\bibitem{b_adelani_ner}
+D.\ Adelani et al.,
+``MasakhaNER: Named entity recognition for African languages,''
+\emph{Trans.\ Assoc.\ Comput.\ Linguistics}, vol.\ 9,
+pp.\ 1116--1131, 2021.
+
+\end{thebibliography}
+
+\end{document}

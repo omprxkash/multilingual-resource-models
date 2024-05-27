@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite the associated papers."
+authors:
+  - family-names: Pugazhendhi
+    given-names: Omprakash
+    alias: omprxkash
+  - family-names: Marivate
+    given-names: Vukosi
+title: "Unified Framework for Low-Resource African NLP: Cross-lingual Transfer,
+  Data Augmentation, and Knowledge Distillation"
+version: 1.0.0
+date-released: 2025-01-01
+url: "https://github.com/omprxkash/multilingual-resource-models"
+references:
+  - type: article
+    title: "Cross-lingual Transfer of Multilingual Models on Low Resource African Languages"
+    year: 2024
+    url: "https://arxiv.org/abs/2409.10965"
+  - type: article
+    title: "MAGE: Multi-Head Attention Guided Embeddings for Low Resource Sentiment Classification"
+    year: 2025
+    url: "https://arxiv.org/abs/2502.17987"
+  - type: article
+    title: "AfroXLMR-Comet: Multilingual Knowledge Distillation with Attention Matching for Low-Resource Languages"
+    year: 2025
+    url: "https://arxiv.org/abs/2502.18020"
