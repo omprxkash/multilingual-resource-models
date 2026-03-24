@@ -162,23 +162,20 @@ multilingual-resource-models/
 If you use this work, please cite the three underlying papers:
 
 ```bibtex
-@article{thangaraj2024crosslingual,
+@article{crosslingual2024,
   title   = {Cross-lingual transfer of multilingual models on low resource African languages},
-  author  = {Thangaraj, Harish and Chenat, Ananya and Walia, Jaskaran Singh and Marivate, Vukosi},
   journal = {arXiv:2409.10965},
   year    = {2024}
 }
 
-@article{vashisht2025mage,
+@article{mage2025,
   title   = {MAGE: Multi-head attention guided embeddings for low resource sentiment classification},
-  author  = {Vashisht, Varun and Singh, Samar and Konduskar, Mihir and Walia, Jaskaran Singh and Marivate, Vukosi},
   journal = {arXiv:2502.17987},
   year    = {2025}
 }
 
-@article{raju2025comet,
+@article{comet2025,
   title   = {AfroXLMR-Comet: Multilingual knowledge distillation with attention matching for low-resource languages},
-  author  = {Raju, Joshua Sakthivel and S, Sanjay and Walia, Jaskaran Singh and Raghav, Srinivas and Marivate, Vukosi},
   journal = {arXiv:2502.18020},
   year    = {2025}
 }
